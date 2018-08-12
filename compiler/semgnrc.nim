@@ -320,9 +320,32 @@ proc semGenericStmt(c: PContext, n: PNode,
   of nkIfStmt:
     for i in countup(0, sonsLen(n)-1):
       n.sons[i] = semGenericStmtScope(c, n.sons[i], flags, ctx)
+
   of nkWhenStmt:
+    # The statement is composed of N nkElifBranch plus an optional nkElse.
+    # We need to process the elif guard expressions in the current scope
+    # but the bodies need to be processed in a Mixin context since they may
+    # not be finally compiled.
     for i in countup(0, sonsLen(n)-1):
+      let nn = n.sons[i]
+
+      # TODO: currently it only supports single references, more complex
+      # expressions are not handled at all, not even function calls or
+      # members. If we try to traverse the whole expression without a
+      # withinMixing flag then some patterns start to break on system.nim,
+      # for instance `when T is string` tries to resolve `is` as an ident
+      # and fails.
+      if nn.kind == nkElifBranch:
+        let nn0 = nn.sons[0]
+        let s = qualifiedLookUp(c, nn0, {})
+        if  s == nil and
+            {withinMixin, withinConcept}*flags == {} and
+            nn0.kind in {nkIdent, nkAccQuoted} and
+            considerQuotedIdent(c, nn0).id notin ctx.toMixin:
+          errorUndeclaredIdentifier(c, nn.info, nn0.renderTree)
+
       n.sons[i] = semGenericStmt(c, n.sons[i], flags+{withinMixin}, ctx)
+
   of nkWhileStmt:
     openScope(c)
     for i in countup(0, sonsLen(n)-1):
